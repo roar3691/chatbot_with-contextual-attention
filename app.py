@@ -67,7 +67,7 @@ if "last_query_time" not in st.session_state:
     st.session_state.last_query_time = 0
 
 # UI Title
-st.title("🤖 Ultimate AI Chatbot")
+st.title("CogniChat")
 
 # Heuristic Multi-Scale Attention (No CPU/Training)
 def heuristic_multi_scale_attention(query):
