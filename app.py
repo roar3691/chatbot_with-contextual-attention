@@ -258,7 +258,7 @@ async def query_ai(query, user_id, file_content=None):
 
     prompt = f"""
     **User Query**: "{query}"
-    **Contextual History (last 3 interactions only)**: 
+    **Contextual History**: 
     {past_context}
     **Google Search Results**: 
     {google_results}
@@ -267,11 +267,10 @@ async def query_ai(query, user_id, file_content=None):
     **Instructions**:
     - Respond in a {preferences['tone']} tone with {preferences['detail_level']} detail in {lang}.
     - Format as {preferences['format']} (e.g., paragraphs or bullet points).
-    - Focus strictly on answering the query; do not add unrelated commentary or tangents.
-    - Use contextual history only if directly relevant to the query; otherwise, ignore it.
-    - Incorporate file content or Google Search results if provided and relevant.
-    - Keep responses concise and to the point unless high detail is requested.
-    - If unclear, ask for clarification politely without speculation.
+    - Use contextual history for personalization; summarize if long.
+    - Incorporate file content or external API data if relevant.
+    - Keep greetings engaging; ensure questions are answered accurately.
+    - If unclear, ask for clarification politely.
     """
 
     try:
