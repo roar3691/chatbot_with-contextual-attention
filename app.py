@@ -44,6 +44,7 @@ generation_config = {
 model = genai.GenerativeModel(
     model_name="learnlm-1.5-pro-experimental",
     generation_config=generation_config,
+    tools='code_execution',
 )
 
 # Session State Initialization
