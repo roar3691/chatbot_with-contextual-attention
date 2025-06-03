@@ -4,136 +4,151 @@ import os
 import logging
 from datetime import datetime, timedelta
 import uuid
-import hashlib
-from io import BytesIO
-import random
-import re
 import threading
 import asyncio
+import re
+import random
+from hashlib import sha256
+from io import BytesIO
 
 # Configure logging
-logging.basicConfig(filename="cognichat.log", level=logging.ERROR)
+logging.basicConfig(filename="cognichat.log", level=logging.DEBUG)
 
-# Function to install packages dynamically
-def install(package):
+# Function to configure packages dynamically
+def configure_pkg(pkg_name, ver=None):
+    pkg_spec = f"{pkg_name}=={ver}" if ver else pkg_name
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg_spec], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
     except subprocess.CalledProcessError as e:
-        logging.error(f"Failed to install {package}: {str(e)}")
-        st.error(f"🚨 Failed to install {package}. Please install it manually using 'pip install {package}'.")
+        logging.error(f"Failed to configure {pkg_spec}: {str(e)}")
+        return False
 
-# Install and import dependencies
+# Configure and import dependencies
 try:
     import streamlit as st
 except ModuleNotFoundError:
-    install("streamlit==1.36.0")
-    import streamlit as st
+    if configure_pkg("streamlit", "1.36.0"):
+        import streamlit as st
+    else:
+        print("🚨 Failed to configure 'streamlit'. Please configure it manually using 'pip install streamlit==1.36.0'.")
+        sys.exit(1)
 
 try:
     import aiohttp
     AIOHTTP_AVAILABLE = True
 except ModuleNotFoundError:
-    install("aiohttp==3.9.1")
-    try:
-        import aiohttp
-        AIOHTTP_AVAILABLE = True
-    except ModuleNotFoundError:
+    if configure_pkg("aiohttp"):
+        try:
+            import aiohttp
+            AIOHTTP_AVAILABLE = True
+        except ModuleNotFoundError:
+            AIOHTTP_AVAILABLE = False
+    else:
         AIOHTTP_AVAILABLE = False
-        st.error("🚨 The 'aiohttp' library could not be installed. Please install it manually using 'pip install aiohttp'.")
+        st.warning("🚨 Failed to configure 'aiohttp'. Please configure it manually using 'pip install aiohttp'. Some AI features may be unavailable.")
 
 try:
     import requests
 except ModuleNotFoundError:
-    install("requests==2.31.0")
-    import requests
+    if configure_pkg("requests", "2.31.0"):
+        import requests
+    else:
+        st.error("🚨 Failed to configure 'requests'. Please configure it manually using 'pip install requests==2.31.0'.")
 
 try:
     import google.generativeai as genai
 except ModuleNotFoundError:
-    install("google-generativeai")
-    import google.generativeai as genai
+    if configure_pkg("google-generativeai", "0.8.3"):
+        import google.generativeai as genai
+    else:
+        st.error("🚨 Failed to configure 'google-generativeai'. Please configure it manually using 'pip install google-generativeai==0.8.3'.")
 
 try:
     from pymongo import MongoClient, ASCENDING
 except ModuleNotFoundError:
-    install("pymongo==4.6.1")
-    from pymongo import MongoClient, ASCENDING
+    if configure_pkg("pymongo", "4.6.1"):
+        from pymongo import MongoClient, ASCENDING
+    else:
+        st.error("🚨 Failed to configure 'pymongo'. Please configure it manually using 'pip install pymongo==4.6.1'.")
 
 try:
     from googleapiclient.discovery import build
 except ModuleNotFoundError:
-    install("google-api-python-client==2.111.0")
-    from googleapiclient.discovery import build
+    if configure_pkg("google-api-python-client", "2.111.0"):
+        from googleapiclient.discovery import build
+    else:
+        st.error("🚨 Failed to configure 'google-api-python-client'. Please configure it manually using 'pip install google-api-python-client==2.111.0'.")
 
 try:
     import PyPDF2
 except ModuleNotFoundError:
-    install("PyPDF2==3.0.1")
-    import PyPDF2
-
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    install("python-dotenv==1.0.0")
-    from dotenv import load_dotenv
+    if configure_pkg("PyPDF2", "3.0.1"):
+        import PyPDF2
+    else:
+        st.error("🚨 Failed to configure 'PyPDF2'. Please configure it manually using 'pip install PyPDF2==3.0.1'.")
 
 try:
     from collections import deque
 except ModuleNotFoundError:
     st.error("🚨 The 'collections' module is missing. This is a standard library, please ensure you're using Python 3.7+.")
+    sys.exit(1)
 
-# Load environment variables
-load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-SEARCH_ENGINE_ID = os.getenv("SEARCH_ENGINE_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
+# Hardcoded Environment Variables
+GOOGLE_API_KEY = "AIzaSyBaCx9eHQYUjaCH-iJdzmR9LCszYKnWTtc"
+SEARCH_ENGINE_ID = "e6da2fcb52c994349"
+GEMINI_API_KEY = "AIzaSyCRYqVb1Bu1DTXv7iHuXzz0WP4oJxRAy1w"
+MONGO_URI = "mongodb+srv://raghuyanala:Kanna%401249@cluster0.wkvyw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
 # Validate environment variables
 if not all([GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, MONGO_URI]):
-    st.error("🚨 Missing environment variables. Please set GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, and MONGO_URI in a .env file.")
-else:
-    # Configure Gemini AI
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        logging.error(f"Gemini API Configuration Error: {str(e)}")
-        st.error(f"🚨 Failed to configure Gemini API: {str(e)}. Please check your GEMINI_API_KEY.")
+    st.error("🚨 Missing environment variables. Please ensure all API keys and MongoDB URI are set.")
+    sys.exit(1)
 
-    # MongoDB Setup
-    try:
-        client = MongoClient(MONGO_URI)
-        db = client["chatbot_db"]
-        chat_collection = db["chat_history"]
-        profile_collection = db["user_profiles"]
-        MAX_CHAT_HISTORY = 500
+# Configure Gemini AI
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+except Exception as e:
+    logging.error(f"Gemini API Configuration Error: {str(e)}")
+    st.error(f"🚨 Failed to configure Gemini API: {str(e)}. Please check your GEMINI_API_KEY.")
+    sys.exit(1)
 
-        # Create indexes for performance
-        chat_collection.create_index([("user_id", ASCENDING), ("timestamp", ASCENDING)])
-        profile_collection.create_index([("user_id", ASCENDING)])
-        profile_collection.create_index([("username", ASCENDING)])
-    except Exception as e:
-        logging.error(f"MongoDB Connection Error: {str(e)}")
-        st.error(f"🚨 Failed to connect to MongoDB: {str(e)}. Please check your MONGO_URI.")
+# MongoDB Setup
+try:
+    client = MongoClient(MONGO_URI)
+    db = client["chatbot_db"]
+    chat_collection = db["chat_history"]
+    profile_collection = db["user_profiles"]
+    MAX_CHAT_HISTORY = 500
 
-    # Gemini Model Configuration
-    generation_config = {
-        "temperature": 1,
-        "top_p": 0.95,
-        "top_k": 64,
-        "max_output_tokens": 8192,
-        "response_mime_type": "text/plain",
-    }
+    # Create indexes for performance
+    chat_collection.create_index([("user_id", ASCENDING), ("timestamp", ASCENDING)])
+    profile_collection.create_index([("user_id", ASCENDING)])
+    profile_collection.create_index([("username", ASCENDING)])
+except Exception as e:
+    logging.error(f"MongoDB Connection Error: {str(e)}")
+    st.error(f"🚨 Failed to connect to MongoDB: {str(e)}. Please check your MONGO_URI.")
+    sys.exit(1)
 
-    try:
-        model = genai.GenerativeModel(
-            model_name="learnlm-2.0-flash-experimental",
-            generation_config=generation_config,
-            tools='code_execution',
-        )
-    except Exception as e:
-        logging.error(f"Gemini Model Initialization Error: {str(e)}")
-        st.error(f"🚨 Failed to initialize Gemini model: {str(e)}. Please check your GEMINI_API_KEY.")
+# Gemini Model Configuration
+generation_config = {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 64,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+}
+
+try:
+    model = genai.GenerativeModel(
+        model_name="learnlm-2.0-flash-experimental",
+        generation_config=generation_config,
+        tools='code_execution',
+    )
+except Exception as e:
+    logging.error(f"Gemini Model Initialization Error: {str(e)}")
+    st.error(f"🚨 Failed to initialize Gemini model: {str(e)}. Please check your GEMINI_API_KEY.")
+    sys.exit(1)
 
 # Session State Initialization
 if "user_id" not in st.session_state:
@@ -186,7 +201,7 @@ def adjust_focus_score(query, focus_score):
 def create_profile(username, password):
     try:
         user_id = str(uuid.uuid4())
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        hashed_password = sha256(password.encode()).hexdigest()
         profile = {
             "user_id": user_id,
             "username": username,
@@ -206,7 +221,7 @@ def create_profile(username, password):
 
 def authenticate_user(username, password):
     try:
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        hashed_password = sha256(password.encode()).hexdigest()
         user = profile_collection.find_one({"username": username, "password": hashed_password})
         if user:
             prefs = user.get("preferences", {})
@@ -352,7 +367,7 @@ def generate_query_suggestion(user_id):
     return f"Try asking about {random.choice(topics)}?"
 
 # Multi-Modal Processing (PDF Only)
-def process_uploaded_file(file):
+def process_pdf(file):
     if file and file.type == "application/pdf":
         try:
             pdf_reader = PyPDF2.PdfReader(file)
@@ -396,7 +411,7 @@ async def query_ai(query, user_id, file_content=None):
 
     async def try_api_call(attempts=3, timeout=30):
         if not AIOHTTP_AVAILABLE:
-            return "🚨 The 'aiohttp' library is missing. Please install it to use AI features."
+            return "🚨 The 'aiohttp' library is missing. Please configure it to use AI features."
         for attempt in range(attempts):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -501,7 +516,7 @@ def chatbot_ui():
         st.info(generate_query_suggestion(st.session_state.user_id))
 
     uploaded_file = st.file_uploader("Upload a PDF (Optional)", type=["pdf"])
-    file_content = process_uploaded_file(uploaded_file) if uploaded_file else None
+    file_content = process_pdf(uploaded_file) if uploaded_file else None
 
     query = st.chat_input("💬 Type your message...") or st.session_state.last_query
     
@@ -554,8 +569,5 @@ def chatbot_ui():
     analytics_ui(st.session_state.user_id)
 
 # Main App Layout
-if all([GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, MONGO_URI]):
-    profile_ui()
-    chatbot_ui()
-else:
-    st.error("🚨 Application cannot start due to missing environment variables. Please configure them in a .env file.")
+profile_ui()
+chatbot_ui()
