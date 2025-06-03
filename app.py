@@ -42,7 +42,7 @@ generation_config = {
 }
 
 model = genai.GenerativeModel(
-    model_name="learnlm-1.5-pro-experimental",
+    model_name="gemma-3n-e4b-it",
     generation_config=generation_config,
     tools='code_execution',
 )
