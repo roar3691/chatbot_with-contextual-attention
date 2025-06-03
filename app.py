@@ -42,7 +42,7 @@ generation_config = {
 }
 
 model = genai.GenerativeModel(
-    model_name="gemma-3n-e4b-it",
+    model_name="learnlm-2.0-flash-experimental",
     generation_config=generation_config,
     tools='code_execution',
 )
