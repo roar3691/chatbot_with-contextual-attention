@@ -1,62 +1,139 @@
-import streamlit as st
-import asyncio
-import aiohttp
-import requests
-import google.generativeai as genai
-from collections import deque
-from pymongo import MongoClient, ASCENDING
+import subprocess
+import sys
+import os
+import logging
 from datetime import datetime, timedelta
-from googleapiclient.discovery import build
 import uuid
 import hashlib
 from io import BytesIO
 import random
-import PyPDF2
 import re
 import threading
-import logging
+import asyncio
 
 # Configure logging
 logging.basicConfig(filename="cognichat.log", level=logging.ERROR)
 
-# Hardcoded Environment Variables
-GOOGLE_API_KEY = "AIzaSyBaCx9eHQYUjaCH-iJdzmR9LCszYKnWTtc"
-SEARCH_ENGINE_ID = "e6da2fcb52c994349"
-GEMINI_API_KEY = "AIzaSyCRYqVb1Bu1DTXv7iHuXzz0WP4oJxRAy1w"
-MONGO_URI = "mongodb+srv://raghuyanala:Kanna%401249@cluster0.wkvyw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# Function to install packages dynamically
+def install(package):
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to install {package}: {str(e)}")
+        st.error(f"🚨 Failed to install {package}. Please install it manually using 'pip install {package}'.")
 
-# Configure Gemini AI
-if not GEMINI_API_KEY:
-    st.error("🚨 Missing Gemini API Key.")
+# Install and import dependencies
+try:
+    import streamlit as st
+except ModuleNotFoundError:
+    install("streamlit==1.36.0")
+    import streamlit as st
+
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ModuleNotFoundError:
+    install("aiohttp==3.9.1")
+    try:
+        import aiohttp
+        AIOHTTP_AVAILABLE = True
+    except ModuleNotFoundError:
+        AIOHTTP_AVAILABLE = False
+        st.error("🚨 The 'aiohttp' library could not be installed. Please install it manually using 'pip install aiohttp'.")
+
+try:
+    import requests
+except ModuleNotFoundError:
+    install("requests==2.31.0")
+    import requests
+
+try:
+    import google.generativeai as genai
+except ModuleNotFoundError:
+    install("google-generativeai")
+    import google.generativeai as genai
+
+try:
+    from pymongo import MongoClient, ASCENDING
+except ModuleNotFoundError:
+    install("pymongo==4.6.1")
+    from pymongo import MongoClient, ASCENDING
+
+try:
+    from googleapiclient.discovery import build
+except ModuleNotFoundError:
+    install("google-api-python-client==2.111.0")
+    from googleapiclient.discovery import build
+
+try:
+    import PyPDF2
+except ModuleNotFoundError:
+    install("PyPDF2==3.0.1")
+    import PyPDF2
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    install("python-dotenv==1.0.0")
+    from dotenv import load_dotenv
+
+try:
+    from collections import deque
+except ModuleNotFoundError:
+    st.error("🚨 The 'collections' module is missing. This is a standard library, please ensure you're using Python 3.7+.")
+
+# Load environment variables
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+SEARCH_ENGINE_ID = os.getenv("SEARCH_ENGINE_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
+
+# Validate environment variables
+if not all([GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, MONGO_URI]):
+    st.error("🚨 Missing environment variables. Please set GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, and MONGO_URI in a .env file.")
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
+    # Configure Gemini AI
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        logging.error(f"Gemini API Configuration Error: {str(e)}")
+        st.error(f"🚨 Failed to configure Gemini API: {str(e)}. Please check your GEMINI_API_KEY.")
 
-# MongoDB Setup
-client = MongoClient(MONGO_URI)
-db = client["chatbot_db"]
-chat_collection = db["chat_history"]
-profile_collection = db["user_profiles"]
-MAX_CHAT_HISTORY = 500
+    # MongoDB Setup
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client["chatbot_db"]
+        chat_collection = db["chat_history"]
+        profile_collection = db["user_profiles"]
+        MAX_CHAT_HISTORY = 500
 
-# Create indexes for performance
-chat_collection.create_index([("user_id", ASCENDING), ("timestamp", ASCENDING)])
-profile_collection.create_index([("user_id", ASCENDING)])
-profile_collection.create_index([("username", ASCENDING)])
+        # Create indexes for performance
+        chat_collection.create_index([("user_id", ASCENDING), ("timestamp", ASCENDING)])
+        profile_collection.create_index([("user_id", ASCENDING)])
+        profile_collection.create_index([("username", ASCENDING)])
+    except Exception as e:
+        logging.error(f"MongoDB Connection Error: {str(e)}")
+        st.error(f"🚨 Failed to connect to MongoDB: {str(e)}. Please check your MONGO_URI.")
 
-# Gemini Model Configuration
-generation_config = {
-    "temperature": 1,
-    "top_p": 0.95,
-    "top_k": 64,
-    "max_output_tokens": 8192,
-    "response_mime_type": "text/plain",
-}
+    # Gemini Model Configuration
+    generation_config = {
+        "temperature": 1,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_output_tokens": 8192,
+        "response_mime_type": "text/plain",
+    }
 
-model = genai.GenerativeModel(
-    model_name="learnlm-2.0-flash-experimental",
-    generation_config=generation_config,
-    tools='code_execution',
-)
+    try:
+        model = genai.GenerativeModel(
+            model_name="learnlm-2.0-flash-experimental",
+            generation_config=generation_config,
+            tools='code_execution',
+        )
+    except Exception as e:
+        logging.error(f"Gemini Model Initialization Error: {str(e)}")
+        st.error(f"🚨 Failed to initialize Gemini model: {str(e)}. Please check your GEMINI_API_KEY.")
 
 # Session State Initialization
 if "user_id" not in st.session_state:
@@ -107,68 +184,95 @@ def adjust_focus_score(query, focus_score):
 
 # Profile Management Functions
 def create_profile(username, password):
-    user_id = str(uuid.uuid4())
-    hashed_password = hashlib.sha256(password.encode()).hexdigest()
-    profile = {
-        "user_id": user_id,
-        "username": username,
-        "password": hashed_password,
-        "preferences": {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"},
-        "created_at": datetime.utcnow().timestamp(),
-        "interests": {},
-        "query_count": 0,
-        "last_query_time": 0
-    }
-    profile_collection.insert_one(profile)
-    return user_id
+    try:
+        user_id = str(uuid.uuid4())
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        profile = {
+            "user_id": user_id,
+            "username": username,
+            "password": hashed_password,
+            "preferences": {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"},
+            "created_at": datetime.utcnow().timestamp(),
+            "interests": {},
+            "query_count": 0,
+            "last_query_time": 0
+        }
+        profile_collection.insert_one(profile)
+        return user_id
+    except Exception as e:
+        logging.error(f"Create Profile Error: {str(e)}")
+        st.error(f"🚨 Failed to create profile: {str(e)}. Please try again.")
+        return None
 
 def authenticate_user(username, password):
-    hashed_password = hashlib.sha256(password.encode()).hexdigest()
-    user = profile_collection.find_one({"username": username, "password": hashed_password})
-    if user:
-        prefs = user.get("preferences", {})
-        updates = {}
-        if "language" not in prefs:
-            prefs["language"] = "en"
-            updates["preferences"] = prefs
-        if "format" not in prefs:
-            prefs["format"] = "paragraph"
-            updates["preferences"] = prefs
-        if "last_query_time" not in user:
-            updates["last_query_time"] = 0
-        if updates:
-            profile_collection.update_one({"user_id": user["user_id"]}, {"$set": updates})
-        return user["user_id"]
-    return None
+    try:
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        user = profile_collection.find_one({"username": username, "password": hashed_password})
+        if user:
+            prefs = user.get("preferences", {})
+            updates = {}
+            if "language" not in prefs:
+                prefs["language"] = "en"
+                updates["preferences"] = prefs
+            if "format" not in prefs:
+                prefs["format"] = "paragraph"
+                updates["preferences"] = prefs
+            if "last_query_time" not in user:
+                updates["last_query_time"] = 0
+            if updates:
+                profile_collection.update_one({"user_id": user["user_id"]}, {"$set": updates})
+            return user["user_id"]
+        return None
+    except Exception as e:
+        logging.error(f"Authenticate User Error: {str(e)}")
+        st.error(f"🚨 Failed to authenticate: {str(e)}. Please check your credentials.")
+        return None
 
 def get_user_preferences(user_id):
-    user = profile_collection.find_one({"user_id": user_id})
-    if user:
-        prefs = user.get("preferences", {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"})
-        updates = {}
-        if "language" not in prefs:
-            prefs["language"] = "en"
-            updates["preferences"] = prefs
-        if "format" not in prefs:
-            prefs["format"] = "paragraph"
-            updates["preferences"] = prefs
-        if "last_query_time" not in user:
-            updates["last_query_time"] = 0
-        if updates:
-            profile_collection.update_one({"user_id": user_id}, {"$set": updates})
-        return prefs
-    return {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"}
+    try:
+        user = profile_collection.find_one({"user_id": user_id})
+        if user:
+            prefs = user.get("preferences", {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"})
+            updates = {}
+            if "language" not in prefs:
+                prefs["language"] = "en"
+                updates["preferences"] = prefs
+            if "format" not in prefs:
+                prefs["format"] = "paragraph"
+                updates["preferences"] = prefs
+            if "last_query_time" not in user:
+                updates["last_query_time"] = 0
+            if updates:
+                profile_collection.update_one({"user_id": user_id}, {"$set": updates})
+            return prefs
+        return {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"}
+    except Exception as e:
+        logging.error(f"Get User Preferences Error: {str(e)}")
+        st.error(f"🚨 Failed to fetch preferences: {str(e)}. Using default preferences.")
+        return {"tone": "formal", "detail_level": "medium", "language": "en", "format": "paragraph"}
 
 def update_user_preferences(user_id, preferences):
-    profile_collection.update_one({"user_id": user_id}, {"$set": {"preferences": preferences}})
+    try:
+        profile_collection.update_one({"user_id": user_id}, {"$set": {"preferences": preferences}})
+    except Exception as e:
+        logging.error(f"Update User Preferences Error: {str(e)}")
+        st.error(f"🚨 Failed to update preferences: {str(e)}.")
 
 def update_user_interests(user_id, interests):
-    profile_collection.update_one({"user_id": user_id}, {"$set": {"interests": interests}})
+    try:
+        profile_collection.update_one({"user_id": user_id}, {"$set": {"interests": interests}})
+    except Exception as e:
+        logging.error(f"Update User Interests Error: {str(e)}")
+        st.error(f"🚨 Failed to update interests: {str(e)}.")
 
 def update_query_count(user_id):
-    current_time = datetime.utcnow().timestamp()
-    profile_collection.update_one({"user_id": user_id}, {"$inc": {"query_count": 1}, "$set": {"last_query_time": current_time}})
-    st.session_state.last_query_time = current_time
+    try:
+        current_time = datetime.utcnow().timestamp()
+        profile_collection.update_one({"user_id": user_id}, {"$inc": {"query_count": 1}, "$set": {"last_query_time": current_time}})
+        st.session_state.last_query_time = current_time
+    except Exception as e:
+        logging.error(f"Update Query Count Error: {str(e)}")
+        st.error(f"🚨 Failed to update query count: {str(e)}.")
 
 # Google Search Function
 def perform_google_search(query):
@@ -184,25 +288,38 @@ def perform_google_search(query):
 # Chat History Management
 @st.cache_data(ttl=60)
 def fetch_chat_history(user_id, limit=5):
-    return list(chat_collection.find({"user_id": user_id}, {"_id": 0, "user": 1, "ai": 1, "rating": 1})
-                .sort("timestamp", -1).limit(limit))
+    try:
+        return list(chat_collection.find({"user_id": user_id}, {"_id": 0, "user": 1, "ai": 1, "rating": 1})
+                    .sort("timestamp", -1).limit(limit))
+    except Exception as e:
+        logging.error(f"Fetch Chat History Error: {str(e)}")
+        st.error(f"🚨 Failed to fetch chat history: {str(e)}.")
+        return []
 
 def store_chat(user_id, query, response, rating=None):
-    chat_entry = {
-        "user_id": user_id,
-        "user": query,
-        "ai": response,
-        "timestamp": datetime.utcnow().timestamp(),
-        "rating": rating
-    }
-    chat_collection.insert_one(chat_entry)
-    if chat_collection.count_documents({"user_id": user_id}) > MAX_CHAT_HISTORY:
-        oldest = chat_collection.find_one({"user_id": user_id}, sort=[("timestamp", ASCENDING)])
-        chat_collection.delete_one({"_id": oldest["_id"]})
+    try:
+        chat_entry = {
+            "user_id": user_id,
+            "user": query,
+            "ai": response,
+            "timestamp": datetime.utcnow().timestamp(),
+            "rating": rating
+        }
+        chat_collection.insert_one(chat_entry)
+        if chat_collection.count_documents({"user_id": user_id}) > MAX_CHAT_HISTORY:
+            oldest = chat_collection.find_one({"user_id": user_id}, sort=[("timestamp", ASCENDING)])
+            chat_collection.delete_one({"_id": oldest["_id"]})
+    except Exception as e:
+        logging.error(f"Store Chat Error: {str(e)}")
+        st.error(f"🚨 Failed to store chat: {str(e)}.")
 
 def clear_chat_history(user_id):
-    chat_collection.delete_many({"user_id": user_id})
-    st.session_state.chat_history.clear()
+    try:
+        chat_collection.delete_many({"user_id": user_id})
+        st.session_state.chat_history.clear()
+    except Exception as e:
+        logging.error(f"Clear Chat History Error: {str(e)}")
+        st.error(f"🚨 Failed to clear chat history: {str(e)}.")
 
 # Conversation Summarization
 def summarize_history(user_id):
@@ -234,7 +351,6 @@ def generate_query_suggestion(user_id):
     topics = ["latest news", "fun trivia", "math puzzles"]
     return f"Try asking about {random.choice(topics)}?"
 
-# Ascending
 # Multi-Modal Processing (PDF Only)
 def process_uploaded_file(file):
     if file and file.type == "application/pdf":
@@ -279,6 +395,8 @@ async def query_ai(query, user_id, file_content=None):
     """
 
     async def try_api_call(attempts=3, timeout=30):
+        if not AIOHTTP_AVAILABLE:
+            return "🚨 The 'aiohttp' library is missing. Please install it to use AI features."
         for attempt in range(attempts):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -315,10 +433,11 @@ def profile_ui():
                     st.error("Username already exists! Try a different one.")
                 else:
                     user_id = create_profile(username, password)
-                    st.session_state.user_id = user_id
-                    st.session_state.user_preferences = get_user_preferences(user_id)
-                    st.success("Profile created successfully!")
-                    st.rerun()
+                    if user_id:
+                        st.session_state.user_id = user_id
+                        st.session_state.user_preferences = get_user_preferences(user_id)
+                        st.success("Profile created successfully!")
+                        st.rerun()
             elif action == "Login" and st.button("Login"):
                 user_id = authenticate_user(username, password)
                 if user_id:
@@ -435,5 +554,8 @@ def chatbot_ui():
     analytics_ui(st.session_state.user_id)
 
 # Main App Layout
-profile_ui()
-chatbot_ui()
+if all([GOOGLE_API_KEY, SEARCH_ENGINE_ID, GEMINI_API_KEY, MONGO_URI]):
+    profile_ui()
+    chatbot_ui()
+else:
+    st.error("🚨 Application cannot start due to missing environment variables. Please configure them in a .env file.")
