@@ -13,6 +13,16 @@ import random
 import PyPDF2
 import re
 
+# Import the new agent system
+from agents import (
+    AgentCoordinator, 
+    SearchAgent, 
+    ContextAgent, 
+    AttentionAgent, 
+    ResponseAgent, 
+    ProactiveAgent
+)
+
 # Hardcoded Environment Variables
 GOOGLE_API_KEY = "AIzaSyBaCx9eHQYUjaCH-iJdzmR9LCszYKnWTtc"
 SEARCH_ENGINE_ID = "e6da2fcb52c994349"
@@ -68,46 +78,37 @@ if "last_query_time" not in st.session_state:
     st.session_state.last_query_time = 0
 
 # UI Title
-st.title("CogniChat")
+st.title("CogniChat - Agent-Based AI Assistant")
 
-# Heuristic Multi-Scale Attention (No CPU/Training)
-def heuristic_multi_scale_attention(query):
-    # Simulate multi-scale attention with simple rules
-    words = query.lower().split()
-    length = len(words)
+# Initialize Agent System
+@st.cache_resource
+def initialize_agent_system():
+    """Initialize the agent coordination system."""
+    coordinator = AgentCoordinator()
     
-    # Scale 1: Short-term (word count)
-    short_scale = min(1.0, length / 5)  # Favor short, concise queries
+    # Register agents
+    search_agent = SearchAgent(GOOGLE_API_KEY, SEARCH_ENGINE_ID)
+    context_agent = ContextAgent(chat_collection, profile_collection)
+    attention_agent = AttentionAgent()
+    response_agent = ResponseAgent(model)
+    proactive_agent = ProactiveAgent(chat_collection, profile_collection)
     
-    # Scale 2: Mid-term (specificity via keywords)
-    specific_keywords = {"what", "how", "why", "who", "where", "when", "explain", "describe"}
-    mid_scale = sum(1 for word in words if word in specific_keywords) / max(1, length)
+    coordinator.register_agent(search_agent)
+    coordinator.register_agent(context_agent)
+    coordinator.register_agent(attention_agent)
+    coordinator.register_agent(response_agent)
+    coordinator.register_agent(proactive_agent)
     
-    # Scale 3: Long-term (structure)
-    long_scale = 1.0 if "?" in query or len(re.findall(r"\w+", query)) > 3 else 0.5
-    
-    # Combine scales (weighted average)
-    focus_score = (0.3 * short_scale + 0.4 * mid_scale + 0.3 * long_scale)
-    return min(max(focus_score, 0.1), 1.0)  # Clamp between 0.1 and 1.0
+    return coordinator
 
-# DailyDialog-Inspired Focus Score Adjustment
-def adjust_focus_score(query, focus_score):
-    # Proxy for act/emotion based on query content (no dataset needed)
-    words = query.lower().split()
-    if any(word in words for word in ["what", "how", "why", "who", "where", "when"]):  # Question-like (act 2)
-        act_bonus = 0.2
-        if any(word in words for word in ["great", "good", "happy", "cool"]):  # Positive emotion proxy (4)
-            emotion_bonus = 0.1
-        else:
-            emotion_bonus = 0.0
-    elif any(word in words for word in ["tell", "give", "show"]):  # Inform-like (act 1)
-        act_bonus = 0.1
-        emotion_bonus = 0.0
-    else:  # Directive/commissive or vague (act 3/4)
-        act_bonus = -0.1
-        emotion_bonus = 0.0 if "please" in words else -0.1
-    
-    return min(max(focus_score + act_bonus + emotion_bonus, 0.1), 1.0)
+# Get agent coordinator
+agent_coordinator = initialize_agent_system()
+
+# Note: Legacy functions have been refactored into specialized agents:
+# - heuristic_multi_scale_attention & adjust_focus_score -> AttentionAgent
+# - perform_google_search -> SearchAgent  
+# - detect_user_interests -> ProactiveAgent
+# This provides better modularity, testing, and extensibility
 
 # Profile Management Functions
 def create_profile(username, password):
@@ -174,15 +175,8 @@ def update_query_count(user_id):
     profile_collection.update_one({"user_id": user_id}, {"$inc": {"query_count": 1}, "$set": {"last_query_time": current_time}})
     st.session_state.last_query_time = current_time
 
-# Google Search Function
-def perform_google_search(query):
-    try:
-        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
-        res = service.cse().list(q=query, cx=SEARCH_ENGINE_ID, num=3).execute()
-        search_results = res.get("items", [])
-        return "\n".join([f"- [{item['title']}]({item['link']})\n{item['snippet']}" for item in search_results]) or "No results found."
-    except Exception as e:
-        return f"❌ Google Search Error: {e}"
+# Google Search Function - moved to SearchAgent
+# def perform_google_search(query): -> Now handled by SearchAgent
 
 # Chat History Management
 def fetch_chat_history(user_id, limit=5):
@@ -202,26 +196,11 @@ def store_chat(user_id, query, response, rating=None):
         oldest = chat_collection.find_one({"user_id": user_id}, sort=[("timestamp", ASCENDING)])
         chat_collection.delete_one({"_id": oldest["_id"]})
 
-# Conversation Summarization
-def summarize_history(user_id):
-    history = fetch_chat_history(user_id, 20)
-    if not history:
-        return "No recent conversation to summarize."
-    summary = "Recent chat summary:\n"
-    for chat in history:
-        summary += f"- You asked: '{chat['user'][:50]}...', I replied: '{chat['ai'][:50]}...'\n"
-    return summary.strip()
+# Conversation Summarization - moved to ContextAgent
+# def summarize_history(user_id): -> Now handled by ContextAgent
 
-# Detect User Interests
-def detect_user_interests(user_id):
-    history = fetch_chat_history(user_id, 20)
-    interests = {}
-    for chat in history:
-        words = chat["user"].lower().split()
-        for word in words:
-            if len(word) > 3:
-                interests[word] = interests.get(word, 0) + 1
-    return dict(sorted(interests.items(), key=lambda x: x[1], reverse=True)[:3])
+# Detect User Interests - moved to ProactiveAgent  
+# def detect_user_interests(user_id): -> Now handled by ProactiveAgent
 
 # Proactive Suggestion
 def generate_proactive_suggestion(user_id):
@@ -231,6 +210,28 @@ def generate_proactive_suggestion(user_id):
         return f"Hey, noticed you’re into {top_interest}. Want to chat about it?"
     topics = ["latest news", "fun trivia", "math puzzles"]
     return f"How about we discuss {random.choice(topics)}?"
+
+# Proactive Suggestion using Agent System
+def generate_proactive_suggestion_agent(user_id):
+    """Generate proactive suggestion using the ProactiveAgent."""
+    async def _get_suggestion():
+        try:
+            result = await agent_coordinator.process_request("proactive_suggestion", {
+                "user_id": user_id
+            })
+            return result.get("suggestion", "How about we discuss something interesting?")
+        except Exception as e:
+            topics = ["latest news", "fun trivia", "math puzzles", "creative writing"]
+            return f"How about we discuss {random.choice(topics)}?"
+    
+    # Run async function and return result
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        suggestion = loop.run_until_complete(_get_suggestion())
+        return suggestion
+    finally:
+        loop.close()
 
 # Multi-Modal Processing (PDF Only)
 def process_uploaded_file(file):
@@ -245,42 +246,23 @@ def process_uploaded_file(file):
             return f"Error processing PDF: {str(e)}"
     return "Unsupported file type (only PDFs are supported)."
 
-# AI Query Function using Gemini AI
+# AI Query Function using Agent System
 async def query_ai(query, user_id, file_content=None):
-    past_context = summarize_history(user_id) if len(fetch_chat_history(user_id)) > 10 else "\n".join([f"Q: {chat['user']}\nA: {chat['ai']}" for chat in fetch_chat_history(user_id)])
-    google_results = perform_google_search(query) if not file_content else "N/A"
-    preferences = get_user_preferences(user_id)
-    focus_score = heuristic_multi_scale_attention(query)
-    focus_score = adjust_focus_score(query, focus_score)
-    lang = preferences["language"]
-
-    if file_content:
-        query = f"{query}\n\nFile Content: {file_content}"
-
-    prompt = f"""
-    **User Query**: "{query}"
-    **Contextual History**: 
-    {past_context}
-    **Google Search Results**: 
-    {google_results}
-    **User Preferences**: Tone: {preferences['tone']}, Detail Level: {preferences['detail_level']}, Language: {lang}, Format: {preferences['format']}
-    **Focus Score**: {focus_score:.2f}
-    **Instructions**:
-    - Respond in a {preferences['tone']} tone with {preferences['detail_level']} detail in {lang}.
-    - Format as {preferences['format']} (e.g., paragraphs or bullet points).
-    - Use contextual history for personalization; summarize if long.
-    - Incorporate file content or external API data if relevant.
-    - Keep greetings engaging; ensure questions are answered accurately.
-    - If unclear, ask for clarification politely.
-    """
-
+    """Process query using the agent coordination system."""
     try:
-        response = await asyncio.to_thread(
-            model.start_chat().send_message, prompt
-        )
-        return response.text.strip()
+        result = await agent_coordinator.process_request("chat_query", {
+            "user_id": user_id,
+            "query": query,
+            "file_content": file_content
+        })
+        
+        if result.get("success", False):
+            return result.get("response", "Sorry, I couldn't generate a response.")
+        else:
+            return result.get("response", f"Sorry, something went wrong! How can I assist with '{query}'?")
+    
     except Exception as e:
-        st.error(f"❌ Gemini AI Error: {e}")
+        st.error(f"❌ Agent System Error: {e}")
         return f"Sorry, something went wrong! How can I assist with '{query}'?"
 
 # Profile UI
@@ -312,6 +294,25 @@ def profile_ui():
                 st.error("Invalid credentials!")
     else:
         st.subheader(f"Welcome, User {st.session_state.user_id[:8]}!")
+        
+        # Show agent status
+        with st.expander("🤖 Agent System Status"):
+            agent_status = agent_coordinator.get_agent_status()
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Active Agents:**")
+                for agent_name, status in agent_status.items():
+                    st.write(f"✅ {agent_name}")
+            
+            with col2:
+                st.write("**Capabilities:**")
+                all_capabilities = set()
+                for status in agent_status.values():
+                    all_capabilities.update(status.get("capabilities", []))
+                for capability in sorted(all_capabilities):
+                    st.write(f"🔧 {capability.replace('_', ' ').title()}")
+        
         with st.expander("Preferences"):
             tone = st.selectbox("Tone", ["formal", "casual"], index=["formal", "casual"].index(st.session_state.user_preferences["tone"]))
             detail = st.selectbox("Detail Level", ["low", "medium", "high"], index=["low", "medium", "high"].index(st.session_state.user_preferences["detail_level"]))
@@ -368,7 +369,7 @@ def chatbot_ui():
 
     if current_time - st.session_state.last_proactive_time > 30 and not st.session_state.query_processing:
         async def proactive_suggestion():
-            suggestion = await query_ai(generate_proactive_suggestion(st.session_state.user_id), st.session_state.user_id)
+            suggestion = await query_ai(generate_proactive_suggestion_agent(st.session_state.user_id), st.session_state.user_id)
             st.session_state.notifications.append(f"AI Suggests: {suggestion}")
             st.session_state.last_proactive_time = current_time
             st.rerun()
