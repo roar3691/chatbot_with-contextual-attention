@@ -13,11 +13,7 @@ import random
 import PyPDF2
 import re
 
-# Hardcoded Environment Variables
-GOOGLE_API_KEY = "AIzaSyBaCx9eHQYUjaCH-iJdzmR9LCszYKnWTtc"
-SEARCH_ENGINE_ID = "e6da2fcb52c994349"
-GEMINI_API_KEY = "AIzaSyCRYqVb1Bu1DTXv7iHuXzz0WP4oJxRAy1w"
-MONGO_URI = "mongodb+srv://raghuyanala:Kanna%401249@cluster0.wkvyw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+
 
 # Configure Gemini AI
 if not GEMINI_API_KEY:
